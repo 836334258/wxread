@@ -1,5 +1,9 @@
 # 更新日志
 
+## 0.2.1
+
+- 新增原创 Marketplace 插件图标与商店横幅配色
+
 ## 0.2.0
 
 - 使用 VS Code SecretStorage 保持登录会话
