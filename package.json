@@ -1,8 +1,8 @@
 {
   "name": "weread-reader",
-  "displayName": "微信读书 · 阅读器",
-  "description": "在 VS Code 中使用微信读书官方网页阅读，登录后自动同步书架、进度和划线。",
-  "version": "0.2.9",
+  "displayName": "微信读书 · 安全入口",
+  "description": "在 VS Code 中快速打开微信读书官方网页；登录、阅读和同步均由系统浏览器完成。",
+  "version": "0.3.0",
   "publisher": "king836334258",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -49,12 +49,12 @@
     "commands": [
       {
         "command": "wereadReader.open",
-        "title": "微信读书：打开阅读小窗",
+        "title": "微信读书：打开安全入口",
         "icon": "$(book)"
       },
       {
         "command": "wereadReader.openFull",
-        "title": "微信读书：展开阅读器",
+        "title": "微信读书：展开入口面板",
         "icon": "$(open-preview)"
       },
       {
@@ -63,7 +63,7 @@
       },
       {
         "command": "wereadReader.reload",
-        "title": "微信读书：刷新阅读器",
+        "title": "微信读书：刷新入口面板",
         "icon": "$(refresh)"
       },
       {
@@ -72,7 +72,7 @@
       },
       {
         "command": "wereadReader.runDiagnostics",
-        "title": "微信读书：运行登录与同步自检"
+        "title": "微信读书：运行安全与网络自检"
       }
     ],
     "views": {
@@ -86,31 +86,17 @@
       ]
     },
     "configuration": {
-      "title": "微信读书阅读器",
+      "title": "微信读书安全入口",
       "properties": {
-        "wereadReader.proxyPort": {
-          "type": "number",
-          "default": 0,
-          "minimum": 0,
-          "maximum": 65535,
-          "description": "本地代理端口。0 表示自动选择可用端口；远程开发时建议保持 0。"
-        },
         "wereadReader.showStatusBar": {
           "type": "boolean",
           "default": true,
-          "description": "在状态栏显示微信读书快捷入口。"
+          "description": "在状态栏显示官方网页快捷入口。"
         },
         "wereadReader.panelTitle": {
           "type": "string",
-          "default": "微信读书",
-          "description": "阅读器标签页标题。"
-        },
-        "wereadReader.opacity": {
-          "type": "number",
-          "default": 1,
-          "minimum": 0.35,
-          "maximum": 1,
-          "description": "阅读器页面不透明度。"
+          "default": "文档预览",
+          "description": "展开后的安全入口标签页标题。"
         }
       }
     },
@@ -160,16 +146,12 @@
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/proxy.test.ts",
+    "test": "tsx --test test/links.test.ts",
     "check": "npm run typecheck && npm run test && npm run build",
     "vscode:prepublish": "npm run check",
     "package": "vsce package --no-dependencies"
   },
-  "dependencies": {
-    "http-proxy": "^1.18.1"
-  },
   "devDependencies": {
-    "@types/http-proxy": "^1.17.16",
     "@types/node": "^20.17.30",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.6.0",
