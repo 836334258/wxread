@@ -1,0 +1,115 @@
+{
+  "name": "weread-reader",
+  "displayName": "微信读书 · 阅读器",
+  "description": "在 VS Code 中使用微信读书官方网页阅读，登录后自动同步书架、进度和划线。",
+  "version": "0.1.0",
+  "publisher": "local-dev",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/836334258/wxread.git"
+  },
+  "homepage": "https://github.com/836334258/wxread#readme",
+  "bugs": {
+    "url": "https://github.com/836334258/wxread/issues"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Education"
+  ],
+  "keywords": [
+    "微信读书",
+    "微信阅读",
+    "WeRead",
+    "阅读",
+    "电子书"
+  ],
+  "activationEvents": [
+    "onCommand:wereadReader.open",
+    "onWebviewPanel:wereadReader.panel"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "wereadReader.open",
+        "title": "微信读书：打开阅读器",
+        "icon": "$(book)"
+      },
+      {
+        "command": "wereadReader.openExternal",
+        "title": "微信读书：在浏览器中打开"
+      },
+      {
+        "command": "wereadReader.reload",
+        "title": "微信读书：刷新阅读器"
+      }
+    ],
+    "configuration": {
+      "title": "微信读书阅读器",
+      "properties": {
+        "wereadReader.proxyPort": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "本地代理端口。0 表示自动选择可用端口；远程开发时建议保持 0。"
+        },
+        "wereadReader.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "在状态栏显示微信读书快捷入口。"
+        },
+        "wereadReader.panelTitle": {
+          "type": "string",
+          "default": "微信读书",
+          "description": "阅读器标签页标题。"
+        },
+        "wereadReader.opacity": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0.35,
+          "maximum": 1,
+          "description": "阅读器页面不透明度。"
+        }
+      }
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "wereadReader.open"
+        },
+        {
+          "command": "wereadReader.openExternal"
+        },
+        {
+          "command": "wereadReader.reload"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/proxy.test.ts",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "vscode:prepublish": "npm run check",
+    "package": "vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "http-proxy": "^1.18.1"
+  },
+  "devDependencies": {
+    "@types/http-proxy": "^1.17.16",
+    "@types/node": "^20.17.30",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.9",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}
