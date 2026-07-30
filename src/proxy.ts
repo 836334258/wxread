@@ -1,6 +1,7 @@
 import { randomInt } from "node:crypto";
 import * as http from "node:http";
 import httpProxy = require("http-proxy");
+import { mergeCookieHeaders, SessionVault } from "./session";
 
 const WEREAD_ORIGIN = "https://weread.qq.com";
 const HEALTH_PATH = "/_weread_reader/health";
@@ -8,6 +9,32 @@ const HEALTH_PATH = "/_weread_reader/health";
 export interface ProxyAddress {
   readonly origin: string;
   readonly port: number;
+}
+
+export type SyncState = "idle" | "syncing" | "synced" | "error";
+
+export interface ProxyEvents {
+  readonly onAuthChanged?: (loggedIn: boolean) => void;
+  readonly onError?: (message: string) => void;
+  readonly onLastReadChanged?: (path: string) => void;
+  readonly onSyncChanged?: (state: SyncState, message: string) => void;
+}
+
+export function normalizeReaderPath(url: string | undefined): string | undefined {
+  if (!url || !/^\/web\/reader\/[^/?#]+/.test(url)) {
+    return undefined;
+  }
+  const parsed = new URL(url, WEREAD_ORIGIN);
+  return `${parsed.pathname}${parsed.search}`;
+}
+
+function isSyncRequest(request: http.IncomingMessage): boolean {
+  if (request.method !== "POST" || !request.url) {
+    return false;
+  }
+  return /^\/web\/(?:book\/read|book\/bookmark|bookmark|review|chapter\/review)/.test(
+    request.url
+  );
 }
 
 export function rewriteSetCookie(cookie: string): string {
@@ -44,9 +71,26 @@ export class WeReadProxy {
   private server: http.Server | undefined;
   private address: ProxyAddress | undefined;
 
-  constructor(private readonly log: (message: string) => void) {
+  constructor(
+    private readonly session: SessionVault,
+    private readonly log: (message: string) => void,
+    private readonly events: ProxyEvents = {}
+  ) {
     this.proxy.on("proxyReq", (proxyRequest, request) => {
       proxyRequest.setHeader("origin", WEREAD_ORIGIN);
+
+      const wasLoggedIn = this.session.isLoggedIn;
+      this.session.captureCookieHeader(request.headers.cookie);
+      if (wasLoggedIn !== this.session.isLoggedIn) {
+        this.events.onAuthChanged?.(this.session.isLoggedIn);
+      }
+      const cookies = mergeCookieHeaders(
+        this.session.cookieHeader,
+        request.headers.cookie
+      );
+      if (cookies) {
+        proxyRequest.setHeader("cookie", cookies);
+      }
 
       const referer = request.headers.referer;
       if (referer && this.address) {
@@ -54,6 +98,14 @@ export class WeReadProxy {
           "referer",
           referer.replace(this.address.origin, WEREAD_ORIGIN)
         );
+      }
+
+      const readerPath = normalizeReaderPath(request.url);
+      if (readerPath) {
+        this.events.onLastReadChanged?.(readerPath);
+      }
+      if (isSyncRequest(request)) {
+        this.events.onSyncChanged?.("syncing", "正在同步阅读进度…");
       }
     });
 
@@ -82,11 +134,33 @@ export class WeReadProxy {
       }
       if (setCookie.length > 0) {
         headers["set-cookie"] = setCookie;
+        const wasLoggedIn = this.session.isLoggedIn;
+        this.session.captureSetCookies(setCookie);
+        if (wasLoggedIn !== this.session.isLoggedIn) {
+          this.events.onAuthChanged?.(this.session.isLoggedIn);
+        }
+      }
+
+      if (isSyncRequest(request)) {
+        if (
+          proxyResponse.statusCode !== undefined &&
+          proxyResponse.statusCode >= 200 &&
+          proxyResponse.statusCode < 400
+        ) {
+          this.events.onSyncChanged?.("synced", "阅读进度已同步");
+        } else {
+          this.events.onSyncChanged?.(
+            "error",
+            `同步失败（${proxyResponse.statusCode ?? "未知状态"}）`
+          );
+        }
       }
     });
 
     this.proxy.on("error", (error, _request, response) => {
       this.log(`代理请求失败：${error.message}`);
+      this.events.onError?.(error.message);
+      this.events.onSyncChanged?.("error", "网络异常，同步暂时中断");
       if (response instanceof http.ServerResponse && !response.headersSent) {
         response.writeHead(502, {
           "content-type": "text/plain; charset=utf-8",
@@ -102,11 +176,15 @@ export class WeReadProxy {
       return this.address;
     }
 
+    await this.session.load();
+    this.events.onAuthChanged?.(this.session.isLoggedIn);
+
     const server = http.createServer((request, response) => {
       if (request.url === HEALTH_PATH) {
         response.writeHead(200, {
           "content-type": "application/json; charset=utf-8",
-          "cache-control": "no-store"
+          "cache-control": "no-store",
+          "access-control-allow-origin": "*"
         });
         response.end(JSON.stringify({ ok: true }));
         return;
@@ -147,10 +225,12 @@ export class WeReadProxy {
     this.server = undefined;
     this.address = undefined;
     if (!server) {
+      await this.session.flush();
       return;
     }
 
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    await this.session.flush();
     this.log("本地阅读代理已停止");
   }
 }

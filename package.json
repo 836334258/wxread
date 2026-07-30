@@ -2,7 +2,7 @@
   "name": "weread-reader",
   "displayName": "微信读书 · 阅读器",
   "description": "在 VS Code 中使用微信读书官方网页阅读，登录后自动同步书架、进度和划线。",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "local-dev",
   "license": "MIT",
   "repository": {
@@ -29,6 +29,10 @@
   ],
   "activationEvents": [
     "onCommand:wereadReader.open",
+    "onCommand:wereadReader.openExternal",
+    "onCommand:wereadReader.reload",
+    "onCommand:wereadReader.bossKey",
+    "onCommand:wereadReader.runDiagnostics",
     "onWebviewPanel:wereadReader.panel"
   ],
   "main": "./dist/extension.js",
@@ -46,6 +50,14 @@
       {
         "command": "wereadReader.reload",
         "title": "微信读书：刷新阅读器"
+      },
+      {
+        "command": "wereadReader.bossKey",
+        "title": "微信读书：老板键（隐藏/恢复）"
+      },
+      {
+        "command": "wereadReader.runDiagnostics",
+        "title": "微信读书：运行登录与同步自检"
       }
     ],
     "configuration": {
@@ -87,9 +99,22 @@
         },
         {
           "command": "wereadReader.reload"
+        },
+        {
+          "command": "wereadReader.bossKey"
+        },
+        {
+          "command": "wereadReader.runDiagnostics"
         }
       ]
-    }
+    },
+    "keybindings": [
+      {
+        "command": "wereadReader.bossKey",
+        "key": "ctrl+alt+b",
+        "mac": "cmd+alt+b"
+      }
+    ]
   },
   "scripts": {
     "build": "node esbuild.mjs",
