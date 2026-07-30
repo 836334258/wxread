@@ -509,6 +509,9 @@ export class ReaderPanel implements vscode.WebviewViewProvider {
             loggedIn ? "账号已登录，等待阅读同步" : "等待扫码登录",
             loggedIn
           );
+          if (loggedIn) {
+            this.postToReaders({ type: "reload" });
+          }
         },
         onError: (message) => {
           this.postToReaders({

@@ -6,8 +6,10 @@ import { mergeCookieHeaders, SessionVault } from "./session";
 
 const WEREAD_ORIGIN = "https://weread.qq.com";
 const WEREAD_CDN_ORIGIN = "https://cdn.weread.qq.com";
+const WEIXIN_ORIGIN = "https://open.weixin.qq.com";
 const HEALTH_PATH = "/_weread_reader/health";
 const CDN_PATH_PREFIX = "/_weread_reader/cdn";
+const WEIXIN_PATH_PREFIX = "/_weread_reader/weixin";
 
 export interface ProxyAddress {
   readonly origin: string;
@@ -80,6 +82,10 @@ export function rewriteLocation(location: string): string {
     const url = new URL(location);
     return `${CDN_PATH_PREFIX}${url.pathname}${url.search}${url.hash}`;
   }
+  if (location.startsWith(WEIXIN_ORIGIN)) {
+    const url = new URL(location);
+    return `${WEIXIN_PATH_PREFIX}${url.pathname}${url.search}${url.hash}`;
+  }
   return location;
 }
 
@@ -92,12 +98,20 @@ export function rewriteCdnUrls(value: string): string {
     .replaceAll("//cdn.weread.qq.com", CDN_PATH_PREFIX);
 }
 
+export function rewriteWeixinCallbackUrls(value: string): string {
+  return value
+    .replaceAll(WEREAD_ORIGIN, "")
+    .replaceAll("https:\\/\\/weread.qq.com", "");
+}
+
 export function injectProxyBridge(html: string): string {
   const bridge = `<script data-weread-reader-bridge>
 (() => {
   const upstream = "https://weread.qq.com";
   const cdn = "https://cdn.weread.qq.com";
+  const weixin = "https://open.weixin.qq.com";
   const cdnPrefix = "/_weread_reader/cdn";
+  const weixinPrefix = "/_weread_reader/weixin";
   const localize = (value) => {
     try {
       const url = new URL(String(value), location.href);
@@ -106,6 +120,13 @@ export function injectProxyBridge(html: string): string {
       }
       if (url.origin === cdn) {
         return cdnPrefix + url.pathname + url.search + url.hash;
+      }
+      if (url.origin === weixin) {
+        if (url.pathname === "/connect/qrconnect") {
+          url.searchParams.set("redirect_uri", upstream + "/");
+          url.searchParams.set("self_redirect", "true");
+        }
+        return weixinPrefix + url.pathname + url.search + url.hash;
       }
       return value;
     } catch {
@@ -252,6 +273,7 @@ export class WeReadProxy {
 
   private readonly fingerprint = String(randomInt(100_000_000, 1_000_000_000));
   private readonly cdnRequests = new WeakSet<http.IncomingMessage>();
+  private readonly weixinRequests = new WeakSet<http.IncomingMessage>();
   private server: http.Server | undefined;
   private address: ProxyAddress | undefined;
 
@@ -280,21 +302,27 @@ export class WeReadProxy {
         headers.location = rewriteLocation(location);
       }
 
-      const setCookie = headers["set-cookie"]?.map(rewriteSetCookie) ?? [];
-      if (
-        request.url?.includes("/web/login/weblogin") &&
-        !setCookie.some((cookie) => cookie.startsWith("wr_fp="))
-      ) {
-        setCookie.push(
-          rewriteSetCookie(`wr_fp=${this.fingerprint}; Path=/; Max-Age=31104000`)
-        );
-      }
-      if (setCookie.length > 0) {
-        headers["set-cookie"] = setCookie;
-        const wasLoggedIn = this.session.isLoggedIn;
-        this.session.captureSetCookies(setCookie);
-        if (wasLoggedIn !== this.session.isLoggedIn) {
-          this.events.onAuthChanged?.(this.session.isLoggedIn);
+      if (this.cdnRequests.has(request) || this.weixinRequests.has(request)) {
+        delete headers["set-cookie"];
+      } else {
+        const setCookie = headers["set-cookie"]?.map(rewriteSetCookie) ?? [];
+        if (
+          request.url?.includes("/web/login/weblogin") &&
+          !setCookie.some((cookie) => cookie.startsWith("wr_fp="))
+        ) {
+          setCookie.push(
+            rewriteSetCookie(
+              `wr_fp=${this.fingerprint}; Path=/; Max-Age=31104000`
+            )
+          );
+        }
+        if (setCookie.length > 0) {
+          headers["set-cookie"] = setCookie;
+          const wasLoggedIn = this.session.isLoggedIn;
+          this.session.captureSetCookies(setCookie);
+          if (wasLoggedIn !== this.session.isLoggedIn) {
+            this.events.onAuthChanged?.(this.session.isLoggedIn);
+          }
         }
       }
 
@@ -347,6 +375,9 @@ export class WeReadProxy {
           return;
         }
         let body = rewriteCdnUrls(Buffer.concat(chunks).toString("utf8"));
+        if (this.weixinRequests.has(request)) {
+          body = rewriteWeixinCallbackUrls(body);
+        }
         if (contentType.includes("text/html")) {
           body = injectProxyBridge(body);
         }
@@ -440,12 +471,20 @@ export class WeReadProxy {
       if (request.url?.startsWith(`${CDN_PATH_PREFIX}/`)) {
         this.cdnRequests.add(request);
         request.url = request.url.slice(CDN_PATH_PREFIX.length);
-        this.prepareRequest(request, true);
+        this.prepareRequest(request, "cdn");
         this.proxy.web(request, response, { target: WEREAD_CDN_ORIGIN });
         return;
       }
 
-      this.prepareRequest(request, false);
+      if (request.url?.startsWith(`${WEIXIN_PATH_PREFIX}/`)) {
+        this.weixinRequests.add(request);
+        request.url = request.url.slice(WEIXIN_PATH_PREFIX.length);
+        this.prepareRequest(request, "weixin");
+        this.proxy.web(request, response, { target: WEIXIN_ORIGIN });
+        return;
+      }
+
+      this.prepareRequest(request, "weread");
       this.proxy.web(request, response);
     });
 
@@ -478,12 +517,13 @@ export class WeReadProxy {
 
   private prepareRequest(
     request: http.IncomingMessage,
-    isCdnRequest: boolean
+    target: "weread" | "cdn" | "weixin"
   ): void {
-    request.headers.origin = WEREAD_ORIGIN;
+    request.headers.origin =
+      target === "weixin" ? WEIXIN_ORIGIN : WEREAD_ORIGIN;
     request.headers["accept-encoding"] = "identity";
 
-    if (isCdnRequest) {
+    if (target !== "weread") {
       delete request.headers.cookie;
     } else {
       const wasLoggedIn = this.session.isLoggedIn;
@@ -504,16 +544,18 @@ export class WeReadProxy {
     if (referer && this.address) {
       request.headers.referer = referer.replace(
         this.address.origin,
-        WEREAD_ORIGIN
+        target === "weixin" ? WEIXIN_ORIGIN : WEREAD_ORIGIN
       );
     }
 
-    const readerPath = normalizeReaderPath(request.url);
-    if (readerPath) {
-      this.events.onLastReadChanged?.(readerPath);
-    }
-    if (isSyncRequest(request)) {
-      this.events.onSyncChanged?.("syncing", "正在同步阅读进度…");
+    if (target === "weread") {
+      const readerPath = normalizeReaderPath(request.url);
+      if (readerPath) {
+        this.events.onLastReadChanged?.(readerPath);
+      }
+      if (isSyncRequest(request)) {
+        this.events.onSyncChanged?.("syncing", "正在同步阅读进度…");
+      }
     }
   }
 

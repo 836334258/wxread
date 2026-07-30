@@ -6,7 +6,8 @@ import {
   normalizeReaderPath,
   rewriteCdnUrls,
   rewriteLocation,
-  rewriteSetCookie
+  rewriteSetCookie,
+  rewriteWeixinCallbackUrls
 } from "../src/proxy";
 import {
   mergeCookieHeaders,
@@ -39,10 +40,10 @@ test("rewriteLocation keeps navigation inside the proxy", () => {
   );
 });
 
-test("rewriteLocation leaves third-party login redirects unchanged", () => {
+test("rewriteLocation leaves unrelated third-party redirects unchanged", () => {
   assert.equal(
-    rewriteLocation("https://open.weixin.qq.com/connect/qrconnect"),
-    "https://open.weixin.qq.com/connect/qrconnect"
+    rewriteLocation("https://privacy.qq.com/mb/policy/tencent-privacypolicy"),
+    "https://privacy.qq.com/mb/policy/tencent-privacypolicy"
   );
 });
 
@@ -53,12 +54,28 @@ test("rewriteLocation keeps WeRead CDN redirects inside the proxy", () => {
   );
 });
 
+test("rewriteLocation keeps WeChat OAuth redirects inside the proxy", () => {
+  assert.equal(
+    rewriteLocation("https://open.weixin.qq.com/connect/qrconnect?appid=1"),
+    "/_weread_reader/weixin/connect/qrconnect?appid=1"
+  );
+});
+
 test("rewriteCdnUrls keeps static assets inside the local proxy", () => {
   assert.equal(
     rewriteCdnUrls(
       'https://cdn.weread.qq.com/app.js https:\\/\\/cdn.weread.qq.com/font.woff'
     ),
     "/_weread_reader/cdn/app.js /_weread_reader/cdn/font.woff"
+  );
+});
+
+test("rewriteWeixinCallbackUrls returns OAuth callbacks to the proxy", () => {
+  assert.equal(
+    rewriteWeixinCallbackUrls(
+      '"https://weread.qq.com/?code=abc" "https:\\/\\/weread.qq.com\\/web"'
+    ),
+    '"/?code=abc" "\\/web"'
   );
 });
 
@@ -73,6 +90,8 @@ test("injectProxyBridge keeps WeRead navigation inside the local proxy", () => {
   assert.match(result, /HTMLLinkElement\.prototype/);
   assert.match(result, /iframe\[src\]/);
   assert.match(result, /nativeWindowOpen/);
+  assert.match(result, /redirect_uri/);
+  assert.match(result, /self_redirect/);
   assert.ok(
     result.indexOf("data-weread-reader-bridge") <
       result.indexOf("<title>微信读书</title>")
