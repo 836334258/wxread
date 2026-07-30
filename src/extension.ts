@@ -4,6 +4,7 @@ import {
   LAST_READ_KEY,
   LAST_SYNC_KEY,
   ReaderPanel,
+  SIDEBAR_VIEW_ID,
   type ReaderState
 } from "./webview";
 
@@ -62,6 +63,9 @@ export function activate(context: vscode.ExtensionContext): void {
     statusBar,
     reader.onDidChangeState(updateReadingState),
     vscode.commands.registerCommand("wereadReader.open", () => reader.show()),
+    vscode.commands.registerCommand("wereadReader.openFull", () =>
+      reader.showFull()
+    ),
     vscode.commands.registerCommand("wereadReader.reload", () =>
       reader.reload()
     ),
@@ -69,9 +73,7 @@ export function activate(context: vscode.ExtensionContext): void {
       vscode.env.openExternal(OFFICIAL_HOME)
     ),
     vscode.commands.registerCommand("wereadReader.bossKey", async () => {
-      const wasVisible = reader.visible;
-      await reader.toggleBossKey();
-      bossHidden = wasVisible;
+      bossHidden = await reader.toggleBossKey();
       updateStatusBar();
     }),
     vscode.commands.registerCommand("wereadReader.runDiagnostics", () =>
@@ -82,8 +84,13 @@ export function activate(context: vscode.ExtensionContext): void {
         updateStatusBar();
       }
     }),
+    vscode.window.registerWebviewViewProvider(SIDEBAR_VIEW_ID, reader, {
+      webviewOptions: {
+        retainContextWhenHidden: true
+      }
+    }),
     vscode.window.registerWebviewPanelSerializer("wereadReader.panel", {
-      deserializeWebviewPanel: (panel) => reader.show(panel)
+      deserializeWebviewPanel: (panel) => reader.showFull(panel)
     })
   );
 }

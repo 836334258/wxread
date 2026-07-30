@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type * as vscode from "vscode";
 import {
+  injectProxyBridge,
   normalizeReaderPath,
   rewriteLocation,
   rewriteSetCookie
@@ -41,6 +42,25 @@ test("rewriteLocation leaves third-party login redirects unchanged", () => {
   assert.equal(
     rewriteLocation("https://open.weixin.qq.com/connect/qrconnect"),
     "https://open.weixin.qq.com/connect/qrconnect"
+  );
+});
+
+test("rewriteLocation keeps WeRead CDN redirects inside the proxy", () => {
+  assert.equal(
+    rewriteLocation("https://cdn.weread.qq.com/web/hash.wasm?v=1"),
+    "/_weread_reader/cdn/web/hash.wasm?v=1"
+  );
+});
+
+test("injectProxyBridge keeps WeRead navigation inside the local proxy", () => {
+  const result = injectProxyBridge("<html><head><title>微信读书</title></head></html>");
+
+  assert.match(result, /data-weread-reader-bridge/);
+  assert.match(result, /url\.origin === upstream/);
+  assert.match(result, /_weread_reader\/cdn/);
+  assert.ok(
+    result.indexOf("data-weread-reader-bridge") <
+      result.indexOf("<title>微信读书</title>")
   );
 });
 

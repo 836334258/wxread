@@ -2,7 +2,7 @@
   "name": "weread-reader",
   "displayName": "微信读书 · 阅读器",
   "description": "在 VS Code 中使用微信读书官方网页阅读，登录后自动同步书架、进度和划线。",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "publisher": "king836334258",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -36,19 +36,26 @@
   "activationEvents": [
     "onStartupFinished",
     "onCommand:wereadReader.open",
+    "onCommand:wereadReader.openFull",
     "onCommand:wereadReader.openExternal",
     "onCommand:wereadReader.reload",
     "onCommand:wereadReader.bossKey",
     "onCommand:wereadReader.runDiagnostics",
-    "onWebviewPanel:wereadReader.panel"
+    "onWebviewPanel:wereadReader.panel",
+    "onView:wereadReader.sidebar"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "wereadReader.open",
-        "title": "微信读书：打开阅读器",
+        "title": "微信读书：打开阅读小窗",
         "icon": "$(book)"
+      },
+      {
+        "command": "wereadReader.openFull",
+        "title": "微信读书：展开阅读器",
+        "icon": "$(open-preview)"
       },
       {
         "command": "wereadReader.openExternal",
@@ -56,7 +63,8 @@
       },
       {
         "command": "wereadReader.reload",
-        "title": "微信读书：刷新阅读器"
+        "title": "微信读书：刷新阅读器",
+        "icon": "$(refresh)"
       },
       {
         "command": "wereadReader.bossKey",
@@ -67,6 +75,16 @@
         "title": "微信读书：运行登录与同步自检"
       }
     ],
+    "views": {
+      "explorer": [
+        {
+          "id": "wereadReader.sidebar",
+          "name": "微信读书",
+          "type": "webview",
+          "visibility": "visible"
+        }
+      ]
+    },
     "configuration": {
       "title": "微信读书阅读器",
       "properties": {
@@ -102,6 +120,9 @@
           "command": "wereadReader.open"
         },
         {
+          "command": "wereadReader.openFull"
+        },
+        {
           "command": "wereadReader.openExternal"
         },
         {
@@ -112,6 +133,18 @@
         },
         {
           "command": "wereadReader.runDiagnostics"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "wereadReader.openFull",
+          "when": "view == wereadReader.sidebar",
+          "group": "navigation@1"
+        },
+        {
+          "command": "wereadReader.reload",
+          "when": "view == wereadReader.sidebar",
+          "group": "navigation@2"
         }
       ]
     },
