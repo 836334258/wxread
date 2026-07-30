@@ -20,7 +20,7 @@ export function activate(context: vscode.ExtensionContext): void {
     20
   );
   statusBar.name = "微信读书";
-  statusBar.text = "$(book) 微信读书";
+  statusBar.text = "$(book)";
   statusBar.tooltip = "在 VS Code 中打开微信读书";
   statusBar.command = "wereadReader.open";
 
@@ -41,17 +41,17 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const updateReadingState = (state: ReaderState): void => {
     if (state.syncState === "syncing") {
-      statusBar.text = "$(sync~spin) 微信读书";
+      statusBar.text = "$(sync~spin)";
     } else if (state.syncState === "synced") {
-      statusBar.text = "$(check) 已同步";
+      statusBar.text = "$(check)";
     } else if (state.syncState === "error") {
-      statusBar.text = "$(warning) 同步异常";
+      statusBar.text = "$(warning)";
     } else if (state.loggedIn) {
-      statusBar.text = "$(book) 微信读书";
+      statusBar.text = "$(book)";
     } else {
-      statusBar.text = "$(account) 微信读书";
+      statusBar.text = "$(account)";
     }
-    statusBar.tooltip = state.message;
+    statusBar.tooltip = `微信读书：${state.message}\n单击打开阅读器`;
   };
 
   updateStatusBar();
