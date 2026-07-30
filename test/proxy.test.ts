@@ -4,6 +4,7 @@ import type * as vscode from "vscode";
 import {
   injectProxyBridge,
   normalizeReaderPath,
+  rewriteCdnUrls,
   rewriteLocation,
   rewriteSetCookie
 } from "../src/proxy";
@@ -52,12 +53,26 @@ test("rewriteLocation keeps WeRead CDN redirects inside the proxy", () => {
   );
 });
 
+test("rewriteCdnUrls keeps static assets inside the local proxy", () => {
+  assert.equal(
+    rewriteCdnUrls(
+      'https://cdn.weread.qq.com/app.js https:\\/\\/cdn.weread.qq.com/font.woff'
+    ),
+    "/_weread_reader/cdn/app.js /_weread_reader/cdn/font.woff"
+  );
+});
+
 test("injectProxyBridge keeps WeRead navigation inside the local proxy", () => {
   const result = injectProxyBridge("<html><head><title>微信读书</title></head></html>");
 
   assert.match(result, /data-weread-reader-bridge/);
   assert.match(result, /url\.origin === upstream/);
   assert.match(result, /_weread_reader\/cdn/);
+  assert.match(result, /HTMLIFrameElement\.prototype/);
+  assert.match(result, /HTMLScriptElement\.prototype/);
+  assert.match(result, /HTMLLinkElement\.prototype/);
+  assert.match(result, /iframe\[src\]/);
+  assert.match(result, /nativeWindowOpen/);
   assert.ok(
     result.indexOf("data-weread-reader-bridge") <
       result.indexOf("<title>微信读书</title>")

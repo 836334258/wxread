@@ -2,7 +2,7 @@
   "name": "weread-reader",
   "displayName": "微信读书 · 阅读器",
   "description": "在 VS Code 中使用微信读书官方网页阅读，登录后自动同步书架、进度和划线。",
-  "version": "0.2.5",
+  "version": "0.2.8",
   "publisher": "king836334258",
   "license": "MIT",
   "icon": "images/icon.png",

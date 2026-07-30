@@ -8,7 +8,6 @@ const WEREAD_ORIGIN = "https://weread.qq.com";
 const WEREAD_CDN_ORIGIN = "https://cdn.weread.qq.com";
 const HEALTH_PATH = "/_weread_reader/health";
 const CDN_PATH_PREFIX = "/_weread_reader/cdn";
-const MAX_RETRIES = 2;
 
 export interface ProxyAddress {
   readonly origin: string;
@@ -84,6 +83,15 @@ export function rewriteLocation(location: string): string {
   return location;
 }
 
+export function rewriteCdnUrls(value: string): string {
+  return value
+    .replaceAll("https://cdn.weread.qq.com", CDN_PATH_PREFIX)
+    .replaceAll("http://cdn.weread.qq.com", CDN_PATH_PREFIX)
+    .replaceAll("https:\\/\\/cdn.weread.qq.com", CDN_PATH_PREFIX)
+    .replaceAll("http:\\/\\/cdn.weread.qq.com", CDN_PATH_PREFIX)
+    .replaceAll("//cdn.weread.qq.com", CDN_PATH_PREFIX);
+}
+
 export function injectProxyBridge(html: string): string {
   const bridge = `<script data-weread-reader-bridge>
 (() => {
@@ -104,13 +112,63 @@ export function injectProxyBridge(html: string): string {
       return value;
     }
   };
-  const rewriteLinks = (root) => {
-    if (root instanceof Element && root.matches("a[href]")) {
-      root.setAttribute("href", localize(root.getAttribute("href")));
+  const rewriteAttribute = (element, name) => {
+    const current = element.getAttribute(name);
+    if (current == null) return;
+    const localized = localize(current);
+    if (localized !== current) {
+      element.setAttribute(name, localized);
     }
-    root.querySelectorAll?.("a[href]").forEach((anchor) => {
-      anchor.setAttribute("href", localize(anchor.getAttribute("href")));
+  };
+  const rewriteElementUrls = (element) => {
+    if (element.matches("a[href]")) rewriteAttribute(element, "href");
+    if (element.matches("iframe[src]")) rewriteAttribute(element, "src");
+    if (element.matches("form[action]")) rewriteAttribute(element, "action");
+    if (element.matches("script[src]")) rewriteAttribute(element, "src");
+    if (element.matches("link[href]")) rewriteAttribute(element, "href");
+    if (element.matches("img[src]")) rewriteAttribute(element, "src");
+    if (element.matches("source[src]")) rewriteAttribute(element, "src");
+  };
+  const rewriteUrls = (root) => {
+    if (root instanceof Element) rewriteElementUrls(root);
+    root
+      .querySelectorAll?.(
+        "a[href], iframe[src], form[action], script[src], link[href], img[src], source[src]"
+      )
+      .forEach(rewriteElementUrls);
+  };
+  const patchUrlProperty = (prototype, name) => {
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+    if (!descriptor?.get || !descriptor?.set) return;
+    Object.defineProperty(prototype, name, {
+      configurable: descriptor.configurable,
+      enumerable: descriptor.enumerable,
+      get: descriptor.get,
+      set(value) {
+        descriptor.set.call(this, localize(value));
+      }
     });
+  };
+  patchUrlProperty(HTMLIFrameElement.prototype, "src");
+  patchUrlProperty(HTMLFormElement.prototype, "action");
+  patchUrlProperty(HTMLScriptElement.prototype, "src");
+  patchUrlProperty(HTMLLinkElement.prototype, "href");
+  patchUrlProperty(HTMLImageElement.prototype, "src");
+  patchUrlProperty(HTMLSourceElement.prototype, "src");
+  const nativeSetAttribute = Element.prototype.setAttribute;
+  Element.prototype.setAttribute = function(name, value) {
+    const normalizedName = String(name).toLowerCase();
+    if (
+      (this instanceof HTMLIFrameElement && normalizedName === "src") ||
+      (this instanceof HTMLFormElement && normalizedName === "action") ||
+      (this instanceof HTMLScriptElement && normalizedName === "src") ||
+      (this instanceof HTMLLinkElement && normalizedName === "href") ||
+      (this instanceof HTMLImageElement && normalizedName === "src") ||
+      (this instanceof HTMLSourceElement && normalizedName === "src")
+    ) {
+      value = localize(value);
+    }
+    return nativeSetAttribute.call(this, name, value);
   };
   const nativePushState = history.pushState.bind(history);
   const nativeReplaceState = history.replaceState.bind(history);
@@ -136,21 +194,32 @@ export function injectProxyBridge(html: string): string {
     }
     return nativeFetch(input, init);
   };
+  const nativeWindowOpen = window.open.bind(window);
+  window.open = (url, target, features) =>
+    nativeWindowOpen(url == null ? url : localize(url), target, features);
   document.addEventListener("click", (event) => {
     const anchor = event.target?.closest?.("a[href]");
     if (anchor) anchor.setAttribute("href", localize(anchor.getAttribute("href")));
   }, true);
   new MutationObserver((records) => {
     for (const record of records) {
+      if (record.type === "attributes" && record.target instanceof Element) {
+        rewriteElementUrls(record.target);
+      }
       for (const node of record.addedNodes) {
-        if (node instanceof Element) rewriteLinks(node);
+        if (node instanceof Element) rewriteUrls(node);
       }
     }
-  }).observe(document.documentElement, { childList: true, subtree: true });
+  }).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["href", "src", "action"],
+    childList: true,
+    subtree: true
+  });
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => rewriteLinks(document));
+    document.addEventListener("DOMContentLoaded", () => rewriteUrls(document));
   } else {
-    rewriteLinks(document);
+    rewriteUrls(document);
   }
 })();
 </script>`;
@@ -182,7 +251,6 @@ export class WeReadProxy {
   });
 
   private readonly fingerprint = String(randomInt(100_000_000, 1_000_000_000));
-  private readonly retryCounts = new WeakMap<http.IncomingMessage, number>();
   private readonly cdnRequests = new WeakSet<http.IncomingMessage>();
   private server: http.Server | undefined;
   private address: ProxyAddress | undefined;
@@ -192,44 +260,6 @@ export class WeReadProxy {
     private readonly log: (message: string) => void,
     private readonly events: ProxyEvents = {}
   ) {
-    this.proxy.on("proxyReq", (proxyRequest, request) => {
-      proxyRequest.setHeader("origin", WEREAD_ORIGIN);
-      proxyRequest.setHeader("accept-encoding", "identity");
-
-      if (this.cdnRequests.has(request)) {
-        proxyRequest.removeHeader("cookie");
-      } else {
-        const wasLoggedIn = this.session.isLoggedIn;
-        this.session.captureCookieHeader(request.headers.cookie);
-        if (wasLoggedIn !== this.session.isLoggedIn) {
-          this.events.onAuthChanged?.(this.session.isLoggedIn);
-        }
-        const cookies = mergeCookieHeaders(
-          this.session.cookieHeader,
-          request.headers.cookie
-        );
-        if (cookies) {
-          proxyRequest.setHeader("cookie", cookies);
-        }
-      }
-
-      const referer = request.headers.referer;
-      if (referer && this.address) {
-        proxyRequest.setHeader(
-          "referer",
-          referer.replace(this.address.origin, WEREAD_ORIGIN)
-        );
-      }
-
-      const readerPath = normalizeReaderPath(request.url);
-      if (readerPath) {
-        this.events.onLastReadChanged?.(readerPath);
-      }
-      if (isSyncRequest(request)) {
-        this.events.onSyncChanged?.("syncing", "正在同步阅读进度…");
-      }
-    });
-
     this.proxy.on("proxyRes", (proxyResponse, request, response) => {
       const headers = proxyResponse.headers;
       delete headers["x-frame-options"];
@@ -240,6 +270,10 @@ export class WeReadProxy {
       delete headers["cross-origin-resource-policy"];
       delete headers.connection;
       delete headers["keep-alive"];
+      if (this.cdnRequests.has(request)) {
+        headers["access-control-allow-origin"] = "*";
+        delete headers["access-control-allow-credentials"];
+      }
 
       const location = headers.location;
       if (location) {
@@ -286,12 +320,15 @@ export class WeReadProxy {
 
       const contentType = headers["content-type"] ?? "";
       const contentEncoding = headers["content-encoding"];
-      const shouldInject =
+      const shouldTransform =
         request.method !== "HEAD" &&
-        contentType.includes("text/html") &&
+        (contentType.includes("text/html") ||
+          contentType.includes("text/css") ||
+          contentType.includes("javascript") ||
+          contentType.includes("application/json")) &&
         (!contentEncoding || contentEncoding === "identity");
 
-      if (!shouldInject) {
+      if (!shouldTransform) {
         response.writeHead(
           proxyResponse.statusCode ?? 502,
           proxyResponse.statusMessage ?? "",
@@ -309,7 +346,10 @@ export class WeReadProxy {
         if (response.destroyed || response.headersSent) {
           return;
         }
-        const body = injectProxyBridge(Buffer.concat(chunks).toString("utf8"));
+        let body = rewriteCdnUrls(Buffer.concat(chunks).toString("utf8"));
+        if (contentType.includes("text/html")) {
+          body = injectProxyBridge(body);
+        }
         delete headers["content-encoding"];
         delete headers["transfer-encoding"];
         headers["content-length"] = String(Buffer.byteLength(body));
@@ -332,36 +372,6 @@ export class WeReadProxy {
     });
 
     this.proxy.on("error", (error, request, response) => {
-      const retryCount = this.retryCounts.get(request) ?? 0;
-      const canRetry =
-        (request.method === "GET" || request.method === "HEAD") &&
-        response instanceof http.ServerResponse &&
-        !response.headersSent &&
-        !response.destroyed &&
-        retryCount < MAX_RETRIES;
-
-      if (canRetry) {
-        const nextRetry = retryCount + 1;
-        this.retryCounts.set(request, nextRetry);
-        this.log(
-          `代理请求失败，正在重试 ${nextRetry}/${MAX_RETRIES}：${error.message}`
-        );
-        setTimeout(() => {
-          if (
-            response instanceof http.ServerResponse &&
-            !response.headersSent &&
-            !response.destroyed
-          ) {
-            this.proxy.web(request, response, {
-              target: this.cdnRequests.has(request)
-                ? WEREAD_CDN_ORIGIN
-                : WEREAD_ORIGIN
-            });
-          }
-        }, nextRetry * 500);
-        return;
-      }
-
       this.log(`代理请求失败：${error.message}`);
       if (isDocumentRequest(request)) {
         this.events.onError?.(error.message);
@@ -392,7 +402,7 @@ export class WeReadProxy {
   <body>
     <div class="card">
       <h3>微信读书暂时连接失败</h3>
-      <p>插件已经自动重试 ${MAX_RETRIES} 次。请稍后点击上方“刷新”。</p>
+      <p>插件会在侧栏中自动重试，也可以点击上方“刷新”。</p>
       <code>${escapeHtml(error.message)}</code>
     </div>
   </body>
@@ -430,10 +440,12 @@ export class WeReadProxy {
       if (request.url?.startsWith(`${CDN_PATH_PREFIX}/`)) {
         this.cdnRequests.add(request);
         request.url = request.url.slice(CDN_PATH_PREFIX.length);
+        this.prepareRequest(request, true);
         this.proxy.web(request, response, { target: WEREAD_CDN_ORIGIN });
         return;
       }
 
+      this.prepareRequest(request, false);
       this.proxy.web(request, response);
     });
 
@@ -462,6 +474,47 @@ export class WeReadProxy {
     this.address = address;
     this.log(`本地阅读代理已启动：${address.origin}`);
     return address;
+  }
+
+  private prepareRequest(
+    request: http.IncomingMessage,
+    isCdnRequest: boolean
+  ): void {
+    request.headers.origin = WEREAD_ORIGIN;
+    request.headers["accept-encoding"] = "identity";
+
+    if (isCdnRequest) {
+      delete request.headers.cookie;
+    } else {
+      const wasLoggedIn = this.session.isLoggedIn;
+      this.session.captureCookieHeader(request.headers.cookie);
+      if (wasLoggedIn !== this.session.isLoggedIn) {
+        this.events.onAuthChanged?.(this.session.isLoggedIn);
+      }
+      const cookies = mergeCookieHeaders(
+        this.session.cookieHeader,
+        request.headers.cookie
+      );
+      if (cookies) {
+        request.headers.cookie = cookies;
+      }
+    }
+
+    const referer = request.headers.referer;
+    if (referer && this.address) {
+      request.headers.referer = referer.replace(
+        this.address.origin,
+        WEREAD_ORIGIN
+      );
+    }
+
+    const readerPath = normalizeReaderPath(request.url);
+    if (readerPath) {
+      this.events.onLastReadChanged?.(readerPath);
+    }
+    if (isSyncRequest(request)) {
+      this.events.onSyncChanged?.("syncing", "正在同步阅读进度…");
+    }
   }
 
   async stop(): Promise<void> {
