@@ -13,6 +13,11 @@ export interface ReaderState {
   readonly syncState: SyncState;
 }
 
+interface ReaderEndpoint {
+  readonly uri: vscode.Uri;
+  readonly port: number;
+}
+
 function nonce(): string {
   const alphabet =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -260,8 +265,8 @@ export class ReaderPanel implements vscode.WebviewViewProvider {
   private panel: vscode.WebviewPanel | undefined;
   private view: vscode.WebviewView | undefined;
   private proxy: WeReadProxy | undefined;
-  private proxyUri: vscode.Uri | undefined;
-  private proxyStartup: Promise<vscode.Uri> | undefined;
+  private endpoint: ReaderEndpoint | undefined;
+  private proxyStartup: Promise<ReaderEndpoint> | undefined;
   private hiddenTarget: "panel" | "sidebar" | "both" | undefined;
   private lastTextEditor:
     | { document: vscode.TextDocument; viewColumn: vscode.ViewColumn | undefined }
@@ -408,7 +413,7 @@ export class ReaderPanel implements vscode.WebviewViewProvider {
     this.panel?.dispose();
     this.panel = undefined;
     this.view = undefined;
-    this.proxyUri = undefined;
+    this.endpoint = undefined;
     void this.proxy?.stop();
     this.proxy = undefined;
     this.stateEmitter.dispose();
@@ -438,11 +443,20 @@ export class ReaderPanel implements vscode.WebviewViewProvider {
     );
 
     try {
-      const proxyUri = await this.ensureProxy();
+      const endpoint = await this.ensureProxy();
       const config = vscode.workspace.getConfiguration("wereadReader");
+      webview.options = {
+        enableScripts: true,
+        portMapping: [
+          {
+            webviewPort: endpoint.port,
+            extensionHostPort: endpoint.port
+          }
+        ]
+      };
       webview.html = renderReaderHtml(
         webview,
-        proxyUri,
+        endpoint.uri,
         config.get<number>("opacity", 1),
         this.context.globalState.get<string>(LAST_READ_KEY),
         compact
@@ -466,21 +480,21 @@ export class ReaderPanel implements vscode.WebviewViewProvider {
     }
   }
 
-  private async ensureProxy(): Promise<vscode.Uri> {
-    if (this.proxyUri) {
-      return this.proxyUri;
+  private async ensureProxy(): Promise<ReaderEndpoint> {
+    if (this.endpoint) {
+      return this.endpoint;
     }
     this.proxyStartup ??= this.startProxy();
     try {
       return await this.proxyStartup;
     } finally {
-      if (!this.proxyUri) {
+      if (!this.endpoint) {
         this.proxyStartup = undefined;
       }
     }
   }
 
-  private async startProxy(): Promise<vscode.Uri> {
+  private async startProxy(): Promise<ReaderEndpoint> {
     const preferredPort = vscode.workspace
       .getConfiguration("wereadReader")
       .get<number>("proxyPort", 0);
@@ -520,10 +534,11 @@ export class ReaderPanel implements vscode.WebviewViewProvider {
 
     try {
       const address = await proxy.start(preferredPort);
-      const browserUri = await vscode.env.asExternalUri(
-        vscode.Uri.parse(address.origin)
-      );
-      this.proxyUri = browserUri;
+      const endpoint = {
+        uri: vscode.Uri.parse(`http://localhost:${address.port}`),
+        port: address.port
+      };
+      this.endpoint = endpoint;
       this.updateState(
         "idle",
         this.session.isLoggedIn
@@ -531,7 +546,7 @@ export class ReaderPanel implements vscode.WebviewViewProvider {
           : "等待扫码登录",
         this.session.isLoggedIn
       );
-      return browserUri;
+      return endpoint;
     } catch (error) {
       await proxy.stop();
       if (this.proxy === proxy) {
